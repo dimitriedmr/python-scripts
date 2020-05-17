@@ -1,4 +1,5 @@
 #adevarul scrapping de articole
+import unidecode
 import requests
 import urllib.request
 import time
@@ -7,6 +8,8 @@ from bs4 import BeautifulSoup
 import csv
 import os
 from urllib.parse import urlparse
+import dateFix
+
 
 data_inceput='2020-3-16'
 data_sfarsit='2020-5-14'
@@ -41,7 +44,9 @@ def cauta(queryList):
     index = 0
     numeFisier = urlparse(url).netloc[:-3] + '_' + cuvinteCheieLista[0] + '.csv'
     with open(numeFisier,'w', newline='', encoding='utf-8') as csvFile:
-        writer = csv.writer(csvFile)
+        writer = csv.writer(csvFile, quoting=csv.QUOTE_NONNUMERIC)
+        listaRand = ["nr. crt.","data","link","titlu","articol"]
+        writer.writerow(listaRand)
         for query in queryList:
             paginaWebCautari = requests.get(query)
             soupPaginaWebCautari = BeautifulSoup(paginaWebCautari.text, "html.parser")
@@ -50,7 +55,8 @@ def cauta(queryList):
                 linkArticol = listaElemente.find('a', href=True)
                 if not linkArticol:
                     break
-                paginaWebArticol = requests.get(url + linkArticol['href'])
+                paginaWebURL = url + linkArticol['href']
+                paginaWebArticol = requests.get(paginaWebURL)
                 if not paginaWebArticol:
                     break
                 soupPaginaWebArticol = BeautifulSoup(paginaWebArticol.text, "html.parser")
@@ -61,21 +67,33 @@ def cauta(queryList):
                 titlu = resultToStr(linkArticol)
                 titlu = ' '.join(titlu.split())
                 ziLunaAn = resultToStr(listaElemente.find("span",class_='time'))
+                data = ' '.join(re.findall(r"\d+:\d+|\w+",ziLunaAn))
+                    
+                data = dateFix.convertesteLuna(data)
+                if not data:
+                    break
+                    
                 lead = resultToStr(continutArticol.find("h2",class_='articleOpening'))
                 body = resultToStr(continutArticol.find("div",class_='article-body'))
                 # scoate: space, tab, newline, return, formfeed si apoi le uneste folosind cate un spatiu
                 lead = ' '.join(lead.split())
                 body = ' '.join(body.split())
-                data = ' '.join(re.findall(r"[^\W\d_]+|\d+",ziLunaAn))
-
-                print(titlu)
-                if data in articoleGasite:
+                
+                if paginaWebURL in articoleGasite:
                     break
-                articoleGasite.add(data)
-
+                articoleGasite.add(paginaWebURL)
+                
                 articol = lead + body
                 index = index + 1
-                listaRand = [index,data,titlu,articol]
+                
+                titlu = unidecode.unidecode(titlu)
+                articol = unidecode.unidecode(articol)
+                
+                titlu = titlu.replace(',,', '\"')
+                articol = articol.replace(',,', '\"')
+                
+                print(titlu)
+                listaRand = [index,data,paginaWebURL,titlu,articol]
                 print(index)
 
                 writer.writerow(listaRand)
