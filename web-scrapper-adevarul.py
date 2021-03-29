@@ -1,107 +1,116 @@
-#adevarul scrapping de articole
+# adevarul scrapping de articole
 import unidecode
 import requests
 import urllib.request
-import time
 import re
+import pandas
 from bs4 import BeautifulSoup
-import csv
-import os
 from urllib.parse import urlparse
-import dateFix
 
+class Search:
+    def __init__(self, terms, pages, startDate, endDate):
+        '''
+        Search constructor
+        '''
+        self.url = 'https://adevarul.ro'
+        self.searchDictionary = { 
+                                'terms'     : '', 
+                                'fromDate'  : startDate, 
+                                'toDate'    : endDate,
+                                'tab'       : 'mrarticle', 
+                                'page'      : 1 
+                                }
+        # compile all url queries
+        self.urlQueryList = []
+        for keyWord in terms:
+            for page in pages:
+                urlQuery = self.url + '/cauta/?'
+                for searchKey, searchValue in self.searchDictionary.items():
+                    urlQuery += f'&{searchKey}='
+                    if searchKey == 'terms':
+                        urlQuery += keyWord
+                    elif searchKey == 'page':
+                        urlQuery += str(page)
+                    else:
+                        urlQuery += searchValue
+                self.urlQueryList += [urlQuery]
+    
+    def fixMonth(self, datainput):
+        '''
+        date fix
+        '''
+        date = {
+            "Ian" : "01", "ianuarie" : "01",
+            "Feb" : "02", "februarie" : "02",
+            "Mar" : "03", "martie" : "03",
+            "Apr" : "04", "aprilie" : "04",
+            'May' : '05', "mai" : "05",
+            'Jun' : '06', "iunie" : "06",
+            'Jul' : '07', "iulie" : "07",
+            'Aug' : '08', "august" : "08",
+            'Sep' : '09', "septembrie" : "09",
+            'Oct' : '10', "octombrie" : "10",
+            'Nov' : '11', "noiembrie" : "11",
+            'Dec' : '12', "decembrie" : "12",
+        }
+        for key, value in date.items():
+            datainput = datainput.replace(key, value)
+        return datainput
 
-data_inceput='2020-3-16'
-data_sfarsit='2020-5-14'
-url = 'https://adevarul.ro'
-cuvinteCheieLista = ['scoala','scoli','scolile','scolilor']
-
-def queryListCreator():
-    queryList = []
-    for cuvatCheie in cuvinteCheieLista:
-        #pentru fiecare cuvant de cautare imi creez 
-        query = url + '/cauta/?terms=' + cuvatCheie + '&fromDate=' + data_inceput + '&toDate=' + data_sfarsit + '&tab=mrarticle&page=1'
-        paginaWebCautari = requests.get(query)
-        soupPaginaWebCautari = BeautifulSoup(paginaWebCautari.text, "html.parser")
-        nr_pagini_ul = soupPaginaWebCautari.find("ul",class_='page-no')
-        if nr_pagini_ul is None:
-            queryList.append(query)
-            break
-        nr_pagini = int(nr_pagini_ul.find_all("a")[-1].text)
-        for pagina in range(nr_pagini):
-            queryList.append(query[:-1] + str(pagina+1))
-    return queryList
-
-def resultToStr(result):
-    ret = ""
-    if result:
-        ret = result.text
-    return ret
-
-articoleGasite = set()
-
-def cauta(queryList):
-    index = 0
-    numeFisier = urlparse(url).netloc[:-3] + '_' + cuvinteCheieLista[0] + '.csv'
-    with open(numeFisier,'w', newline='', encoding='utf-8') as csvFile:
-        writer = csv.writer(csvFile, quoting=csv.QUOTE_NONNUMERIC)
-        listaRand = ["nr. crt.","data","link","titlu","articol"]
-        writer.writerow(listaRand)
-        for query in queryList:
-            paginaWebCautari = requests.get(query)
-            soupPaginaWebCautari = BeautifulSoup(paginaWebCautari.text, "html.parser")
-            listaArticole = soupPaginaWebCautari.find("ul",class_='article-list')
-            for listaElemente in listaArticole.find_all('li'):
-                linkArticol = listaElemente.find('a', href=True)
-                if not linkArticol:
+    def parseQueries(self, columns):
+        '''
+        It saves the necessary information inside a data frame.
+        '''
+        results = {el : [] for el in columns}
+        for query in self.urlQueryList:
+            webPage = requests.get(query)
+            webPageText = BeautifulSoup(webPage.text, "html.parser")
+            articlesList = webPageText.find("ul", class_ = 'article-list')
+            for elements in articlesList.find_all('li'):
+                # get article link
+                articleLinkPart = elements.find('a', href = True)
+                if not articleLinkPart:
+                    continue
+                link = self.url + articleLinkPart['href']
+                # get article lead
+                articleWebPage = requests.get(link)
+                if not articleWebPage:
+                    continue
+                articleWebPageText = BeautifulSoup(articleWebPage.text, "html.parser")
+                articleContent = articleWebPageText.find("div", class_ = 'article-content')
+                if not articleContent:
                     break
-                paginaWebURL = url + linkArticol['href']
-                paginaWebArticol = requests.get(paginaWebURL)
-                if not paginaWebArticol:
-                    break
-                soupPaginaWebArticol = BeautifulSoup(paginaWebArticol.text, "html.parser")
-                continutArticol = soupPaginaWebArticol.find("div",class_='article-content')
-                if not continutArticol:
-                    break
-                
-                titlu = resultToStr(linkArticol)
-                titlu = ' '.join(titlu.split())
-                ziLunaAn = resultToStr(listaElemente.find("span",class_='time'))
-                data = ' '.join(re.findall(r"\d+:\d+|\w+",ziLunaAn))
-                    
-                data = dateFix.convertesteLuna(data)
+                # get article title
+                title = ' '.join(articleLinkPart.text.split())
+                title = unidecode.unidecode(title)
+                title = title.replace(',,', '\"')
+                # get article date
+                data = ' '.join(re.findall(r"\d+:\d+|\w+", elements.find("span", class_ = 'time').text))
+                data = self.fixMonth(data)
                 if not data:
-                    break
-                    
-                lead = resultToStr(continutArticol.find("h2",class_='articleOpening'))
-                body = resultToStr(continutArticol.find("div",class_='article-body'))
-                # scoate: space, tab, newline, return, formfeed si apoi le uneste folosind cate un spatiu
+                    continue
+                # get article lead
+                lead = f"{articleContent.find('h2', class_ = 'articleOpening').text}"
                 lead = ' '.join(lead.split())
-                body = ' '.join(body.split())
+                lead = lead.replace(',,', '\"')
+                # get article article
+                article = f"{articleContent.find('div', class_ = 'article-body').text}"
+                article = ' '.join(article.split())
+                article = article.replace(',,', '\"')
                 
-                if paginaWebURL in articoleGasite:
-                    break
-                articoleGasite.add(paginaWebURL)
-                
-                articol = lead + body
-                index = index + 1
-                
-                titlu = unidecode.unidecode(titlu)
-                articol = unidecode.unidecode(articol)
-                
-                titlu = titlu.replace(',,', '\"')
-                articol = articol.replace(',,', '\"')
-                
-                print(titlu)
-                listaRand = [index,data,paginaWebURL,titlu,articol]
-                print(index)
-
-                writer.writerow(listaRand)
-
-
+                print(title)
+                for column, value in zip(columns, [data, link, title, lead, article]):
+                    results[column] += [value]
+        return results
+        
 if __name__ == '__main__':
-    queryList = queryListCreator()
-    #for q in queryList:
-    #    print(q)
-    cauta(queryList)
-    exit()
+    searchTerms = ['caracal']
+    s = Search(searchTerms, range(1, 37 + 1), '2019-7-25', '2021-3-17')
+    # data frame with the final table
+    columns = ["data", "link", "titlu", "lead", "articol"]
+    results = s.parseQueries(columns)
+    dataFrame = pandas.DataFrame(results)
+    dataFrame.to_csv(f'{urlparse(s.url).netloc[:-3]}_{"_".join(searchTerms)}.csv')
+    for column in columns[:-1]:
+        del dataFrame[column]
+    dataFrame.to_csv(f'{urlparse(s.url).netloc[:-3]}_{"_".join(searchTerms)}_articol.csv')
